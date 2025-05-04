@@ -3,6 +3,7 @@
 #include "SIDBlasterUtils.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
