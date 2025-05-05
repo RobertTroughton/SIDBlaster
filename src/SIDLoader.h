@@ -3,6 +3,7 @@
 #include "Common.h"
 #include "SIDFileFormat.h"
 
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
