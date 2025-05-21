@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/cpp:debian
 
-# Install additional tools
+# Install additional tools including Java
 RUN apt-get update && apt-get -y install --no-install-recommends \
     cmake \
     build-essential \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get -y install --no-install-recommends \
     clang \
     lldb \
     llvm \
+    default-jdk \
     && apt-get autoremove -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*

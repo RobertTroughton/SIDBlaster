@@ -114,8 +114,8 @@ JustPlayMusic:
     asl $d019
     rti
 
-.import source "..\INC\NMIFix.asm"
-.import source "..\INC\RasterLineTiming.asm"
+.import source "../INC/NMIFix.asm"
+.import source "../INC/RasterLineTiming.asm"
 
 * = BitmapMAPData "Bitmap MAP"
 	.fill BitmapMAPFile.getSize(), BitmapMAPFile.get(i)
