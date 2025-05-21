@@ -1,6 +1,6 @@
 # SIDBlaster
 
-*SIDBlaster 0.8.5 - C64 SID Music File Processor*
+*SIDBlaster 0.8.6 - C64 SID Music File Processor*
 
 Developed by Robert Troughton (Raistlin of Genesis Project)
 
@@ -231,3 +231,4 @@ The relocation verification process traces SID register writes from both the ori
 
 - Zagon for Exomizer
 - Mads Nielsen for KickAss assembler
+- Adam Dunkels (Trident) and Magnar Harestad for help

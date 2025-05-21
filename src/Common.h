@@ -19,7 +19,7 @@ namespace fs = std::filesystem;
  */
 
  // Tool name and version
-#define SIDBLASTER_VERSION "SIDBlaster 0.8.5"
+#define SIDBLASTER_VERSION "SIDBlaster 0.8.6"
 
 #define DEFAULT_SID_EMULATION_FRAMES (10 * 60 * 50) // 10 minutes
 
