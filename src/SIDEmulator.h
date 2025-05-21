@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "app/TraceLogger.h"
 #include "SIDWriteTracker.h"
+#include "SIDPatternFinder.h"
 
 #include <functional>
 #include <memory>
@@ -33,6 +34,7 @@ namespace sidblaster {
             std::string traceLogPath;                    ///< Path for trace log (if enabled)
             int callsPerFrame = 1;                       ///< Calls to play routine per frame
             bool registerTrackingEnabled = false;        ///< Whether to track register write order
+            bool patternDetectionEnabled = false;        ///< Whether to detect repeating patterns
         };
 
         /**
@@ -62,6 +64,12 @@ namespace sidblaster {
         const SIDWriteTracker& getWriteTracker() const { return writeTracker_; }
 
         /**
+         * @brief Get the pattern finder
+         * @return Reference to the pattern finder
+         */
+        const SIDPatternFinder& getPatternFinder() const { return patternFinder_; }
+
+        /**
          * @brief Generate a helpful data file with addresses that change and register order
          * @param filename Output filename
          * @return True if file was successfully created
@@ -77,6 +85,7 @@ namespace sidblaster {
         int framesExecuted_ = 0;       ///< Number of frames executed
 
         SIDWriteTracker writeTracker_; ///< Tracks SID register write order
+        SIDPatternFinder patternFinder_; ///< Detects repeating SID patterns
 
     };
 

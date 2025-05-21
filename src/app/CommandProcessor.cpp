@@ -77,11 +77,26 @@ namespace sidblaster {
                 // Enable register tracking specifically for player generation
                 emulationOptions.registerTrackingEnabled = true;
 
+                // Enable pattern detection
+                emulationOptions.patternDetectionEnabled = true;
+
+                // Track CIA timer writes
+                u8 CIATimerLo = 0;
+                u8 CIATimerHi = 0;
+                cpu_->setOnCIAWriteCallback([&](u16 addr, u8 value) {
+                    if (addr == 0xDC04) CIATimerLo = value;
+                    if (addr == 0xDC05) CIATimerHi = value;
+                    });
+
                 // Run emulation to analyze SID patterns
                 util::Logger::info("Analyzing SID register write patterns...");
                 if (!emulator.runEmulation(emulationOptions)) {
                     util::Logger::warning("SID pattern analysis failed - continuing without pattern info");
                 }
+
+                // Calculate play calls per frame
+                int playCallsPerFrame = calculatePlayCallsPerFrame(CIATimerLo, CIATimerHi);
+                sid_->setNumPlayCallsPerFrame(playCallsPerFrame);
             }
 
             // Determine if we need emulation based on the command type
@@ -237,6 +252,10 @@ namespace sidblaster {
             return false;
         }
 
+        // Calculate play calls per frame
+        int playCallsPerFrame = calculatePlayCallsPerFrame(CIATimerLo, CIATimerHi);
+        sid_->setNumPlayCallsPerFrame(playCallsPerFrame);
+
         // Get SID info
         const u16 sidLoad = sid_->getLoadAddress();
         const u16 sidInit = sid_->getInitAddress();
@@ -245,10 +264,6 @@ namespace sidblaster {
         util::Logger::info("SID info - Load: $" + util::wordToHex(sidLoad) +
             ", Init: $" + util::wordToHex(sidInit) +
             ", Play: $" + util::wordToHex(sidPlay));
-
-        // Calculate play calls per frame
-        int playCallsPerFrame = calculatePlayCallsPerFrame(CIATimerLo, CIATimerHi);
-        sid_->setNumPlayCallsPerFrame(playCallsPerFrame);
 
         util::Logger::info("Play calls per frame: " + std::to_string(playCallsPerFrame));
 

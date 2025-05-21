@@ -80,6 +80,7 @@ namespace sidblaster {
                 SIDEmulator::EmulationOptions options;
                 options.frames = 100; // Just need a short run to identify key patterns
                 options.registerTrackingEnabled = true; // Track register write order
+                options.patternDetectionEnabled = true;
 
                 // Run the emulation
                 if (emulator_->runEmulation(options)) {

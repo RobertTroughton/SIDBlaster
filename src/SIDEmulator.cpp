@@ -26,6 +26,11 @@ namespace sidblaster {
             writeTracker_.reset();
         }
 
+        // Clear the pattern finder if pattern detection is enabled
+        if (options.patternDetectionEnabled) {
+            patternFinder_.reset();
+        }
+
         // Set up trace logger if enabled
         if (options.traceEnabled && !options.traceLogPath.empty()) {
             traceLogger_ = std::make_unique<TraceLogger>(options.traceLogPath, options.traceFormat);
@@ -35,8 +40,8 @@ namespace sidblaster {
         }
 
         // Set up callbacks based on enabled features
-        auto updateSIDCallback = [this, &temporaryTrackingEnabled](bool enableTracking) {
-            cpu_->setOnSIDWriteCallback([this, enableTracking](u16 addr, u8 value) {
+        auto updateSIDCallback = [this, &temporaryTrackingEnabled, &options](bool enableTracking) {
+            cpu_->setOnSIDWriteCallback([this, enableTracking, &options](u16 addr, u8 value) {
                 // Call the trace logger if enabled
                 if (traceLogger_) {
                     traceLogger_->logSIDWrite(addr, value);
@@ -45,6 +50,11 @@ namespace sidblaster {
                 // Record the write in our tracker if tracking is enabled
                 if (enableTracking) {
                     writeTracker_.recordWrite(addr, value);
+                }
+
+                // Record the write in our pattern finder if pattern detection is enabled
+                if (options.patternDetectionEnabled) {
+                    patternFinder_.recordWrite(addr, value);
                 }
                 });
             };
@@ -67,7 +77,7 @@ namespace sidblaster {
 
         // Run a short playback period to identify initial memory patterns
         // This helps with memory copies performed during initialization
-        const int preAnalysisFrames = 30000;
+        const int preAnalysisFrames = util::Configuration::getInt("emulationFrames", DEFAULT_SID_EMULATION_FRAMES);
         for (int frame = 0; frame < preAnalysisFrames; ++frame) {
             for (int call = 0; call < options.callsPerFrame; ++call) {
                 cpu_->resetRegistersAndFlags();
@@ -76,13 +86,17 @@ namespace sidblaster {
                 }
             }
 
-            // Mark end of frame in trace log and write tracker
+            // Mark end of frame in trace log, write tracker, and pattern finder
             if (options.traceEnabled && traceLogger_) {
                 traceLogger_->logFrameMarker();
             }
 
             if (options.registerTrackingEnabled) {
                 writeTracker_.endFrame();
+            }
+
+            if (options.patternDetectionEnabled) {
+                patternFinder_.endFrame();
             }
         }
 
@@ -101,8 +115,8 @@ namespace sidblaster {
         maxCyclesPerFrame_ = 0;
         framesExecuted_ = 0;
 
-        // Now enable register tracking if requested in the options
-        if (options.registerTrackingEnabled) {
+        // Now enable register tracking and pattern detection if requested
+        if (options.registerTrackingEnabled || options.patternDetectionEnabled) {
             cpu_->executeFunction(playAddr);    //; do "play" for the first frame .. because some SIDs output differently on the first frame
             temporaryTrackingEnabled = true;
             updateSIDCallback(true);
@@ -136,7 +150,7 @@ namespace sidblaster {
             totalCycles_ += frameCycles;
             lastCycles = curCycles;
 
-            // Mark end of frame in trace log and write tracker
+            // Mark end of frame in trace log, write tracker, and pattern finder
             if (options.traceEnabled && traceLogger_) {
                 traceLogger_->logFrameMarker();
             }
@@ -145,12 +159,31 @@ namespace sidblaster {
                 writeTracker_.endFrame();
             }
 
+            if (options.patternDetectionEnabled) {
+                patternFinder_.endFrame();
+            }
+
             framesExecuted_++;
         }
 
         // Analyze register write patterns if tracking was enabled
         if (temporaryTrackingEnabled) {
             writeTracker_.analyzePattern();
+        }
+
+        // Analyze pattern if pattern detection was enabled
+        if (options.patternDetectionEnabled) {
+            patternFinder_.analyzePattern();
+
+            // Log pattern detection results
+            if (patternFinder_.getPatternPeriod() > 0) {
+                util::Logger::info("SID register write pattern detected: " +
+                    std::to_string(patternFinder_.getInitFramesCount()) + " init frames + " +
+                    std::to_string(patternFinder_.getPatternPeriod()) + " frames per cycle");
+            }
+            else {
+                util::Logger::info("No clear repeating pattern detected in SID register writes");
+            }
         }
 
         // Log cycle stats
@@ -169,7 +202,7 @@ namespace sidblaster {
         return { avgCycles, maxCyclesPerFrame_ };
     }
 
-    // Add this method to SIDEmulator.cpp
+    // Modified to include pattern information
     bool SIDEmulator::generateHelpfulDataFile(const std::string& filename) const {
         std::ofstream file(filename);
         if (!file) {
@@ -179,7 +212,7 @@ namespace sidblaster {
 
         // File header
         file << "// Generated by SIDBlaster\n";
-        file << "// Helpful data for double-buffering and register reordering\n\n";
+        file << "// Helpful data for double-buffering, register reordering, and pattern detection\n\n";
 
         // Part 1: Memory addresses that change
         std::set<u16> writtenAddresses;
@@ -218,6 +251,19 @@ namespace sidblaster {
             file << "// No consistent SID register write order detected\n";
             file << ".var SIDRegisterCount = 0\n";
             file << ".var SIDRegisterOrder = List()\n\n";
+        }
+
+        // Part 3: SID Register write pattern information
+        if (patternFinder_.getPatternPeriod() > 0) {
+            file << "// SID Register write pattern information\n";
+            file << "#define SID_PATTERN_DETECTED\n";
+            file << ".var SIDInitFrames = " << patternFinder_.getInitFramesCount() << "\n";
+            file << ".var SIDPatternPeriod = " << patternFinder_.getPatternPeriod() << "\n\n";
+        }
+        else {
+            file << "// No clear SID register write pattern detected\n";
+            file << ".var SIDInitFrames = 0\n";
+            file << ".var SIDPatternPeriod = 0\n\n";
         }
 
         util::Logger::info("Generated helpful data file: " + filename +

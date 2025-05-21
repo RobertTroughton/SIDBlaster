@@ -738,6 +738,7 @@ RestoreAddresses:
 //; MUSICPLAYER_PlayMusic() - Handle SID music playback and register capture
 //; =============================================================================
 MUSICPLAYER_PlayMusic:
+
         //; Save current memory configuration
         lda $01
         pha
