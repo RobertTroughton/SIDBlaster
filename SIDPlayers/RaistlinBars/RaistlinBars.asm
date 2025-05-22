@@ -35,7 +35,7 @@
 .var ARTIST_NAME_PADDING = (40 - ARTIST_NAME_LENGTH) / 2 //; Centering padding
 
 //; Visualization layout
-.var TOP_SPECTROMETER_PIXELHEIGHT = 135
+.var TOP_SPECTROMETER_PIXELHEIGHT = 127
 .var TOP_SPECTROMETER_HEIGHT = ceil(TOP_SPECTROMETER_PIXELHEIGHT / 8)
 .var BOTTOM_SPECTROMETER_PIXELHEIGHT = 24
 .var BOTTOM_SPECTROMETER_HEIGHT = ceil(BOTTOM_SPECTROMETER_PIXELHEIGHT / 8)
@@ -396,13 +396,13 @@ MUSICPLAYER_Initialize:
         jsr MUSICPLAYER_UpdateBarHeights  //; Apply decay to bar heights
         jsr MUSICPLAYER_SmoothBars    //; Apply smoothing to the bars
         jsr MUSICPLAYER_DrawBars      //; Draw the visualization
+        
+        lda #$00
+        sta UpdateVisualizerSignal    //; Clear update flag
 
         lda CurrentDB
         eor #$01
         sta CurrentDB
-
-        lda #$00
-        sta UpdateVisualizerSignal    //; Clear update flag
 
         jmp MainLoop                  //; Continue looping
 
@@ -724,7 +724,7 @@ MUSICPLAYER_DrawBars:
         .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
             lda MeterToCharValues - REFLECTION_OFFSET + (line * 8), x
             clc
-            adc #20
+            adc #10
             sta SCREEN_ADDRESS0 + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
         }
         jmp !loop-
