@@ -35,9 +35,9 @@
 .var ARTIST_NAME_PADDING = (40 - ARTIST_NAME_LENGTH) / 2 //; Centering padding
 
 //; Visualization layout
-.var TOP_SPECTROMETER_PIXELHEIGHT = 128
+.var TOP_SPECTROMETER_PIXELHEIGHT = 136
 .var TOP_SPECTROMETER_HEIGHT = ceil(TOP_SPECTROMETER_PIXELHEIGHT / 8)
-.var BOTTOM_SPECTROMETER_PIXELHEIGHT = 32
+.var BOTTOM_SPECTROMETER_PIXELHEIGHT = 24
 .var BOTTOM_SPECTROMETER_HEIGHT = ceil(BOTTOM_SPECTROMETER_PIXELHEIGHT / 8)
 .var SPECTROMETER_START_LINE = 25 - (TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT)
 
@@ -213,20 +213,21 @@ StartLocalData:
                                 .byte $02, $0b, $02, $0b, $0b, $05, $06, $0c
 
     //; Color palettes for the visualization
-    .var NUM_COLOR_PALETTES = 4
-    ColorPaletteA:              .byte $09, $04, $05, $0d, $01
-    ColorPaletteB:              .byte $09, $06, $0e, $03, $01
-    ColorPaletteC:              .byte $09, $02, $0a, $0d, $01
-    ColorPaletteD:              .byte $09, $0c, $0f, $07, $01
+    .var NUM_COLOR_PALETTES = 3
+    .var NUM_COLORS_PER_PALETTE = 8
+    ColorPalettes:
+                                  .byte $09, $04, $05, $05, $0d, $0d, $0f, $01
+                                  .byte $09, $06, $0e, $0e, $03, $03, $0f, $01
+                                  .byte $09, $02, $0a, $0a, $07, $07, $0f, $01
 
     //; Pointers to color palettes
-    ColorPalettePtr_Lo:         .byte <ColorPaletteA, <ColorPaletteB, <ColorPaletteC, <ColorPaletteD
-    ColorPalettePtr_Hi:         .byte >ColorPaletteA, >ColorPaletteB, >ColorPaletteC, >ColorPaletteD
+    ColorPalettePtr_Lo:         .fill NUM_COLOR_PALETTES, <(ColorPalettes + i * NUM_COLORS_PER_PALETTE)
+    ColorPalettePtr_Hi:         .fill NUM_COLOR_PALETTES, >(ColorPalettes + i * NUM_COLORS_PER_PALETTE)
 
+    .byte $12, $01, $09, $13, $14, $0c, $09, $0e
     //; Color mapping table based on bar height
     BarHeightToColorIndex:      .byte $ff
-                                .fill TOP_SPECTROMETER_PIXELHEIGHT, min(floor((i * 5) / TOP_SPECTROMETER_PIXELHEIGHT), 4)
-                                .byte 3
+                                .fill TOP_SPECTROMETER_PIXELHEIGHT + 4, max(0, min(floor(((i * NUM_COLORS_PER_PALETTE) + (random() * (TOP_SPECTROMETER_PIXELHEIGHT * 0.8) - (TOP_SPECTROMETER_PIXELHEIGHT * 0.4))) / TOP_SPECTROMETER_PIXELHEIGHT), NUM_COLORS_PER_PALETTE - 1))
 
     //; Color tables for the visualization
     BarColors:                  .fill TOP_SPECTROMETER_PIXELHEIGHT, $0b  //; Main colors for bars
@@ -255,15 +256,14 @@ StartLocalData:
 
 
     //; Character mapping for meter visualization
-    .var METER_TO_CHAR_PADDING = TOP_SPECTROMETER_PIXELHEIGHT
-
-    .var MAINBARS_OFFSET = TOP_SPECTROMETER_PIXELHEIGHT - 7
-    .var REFLECTION_OFFSET = BOTTOM_SPECTROMETER_PIXELHEIGHT - 7
-
-        .fill METER_TO_CHAR_PADDING, 224
+        .fill TOP_SPECTROMETER_PIXELHEIGHT, 224
     MeterToCharValues:
         .fill 8, 225 + i
-        .fill METER_TO_CHAR_PADDING, 233
+        .fill TOP_SPECTROMETER_PIXELHEIGHT, 233
+
+    //; Offsets into this table. Normally we should offset both by -7 .. but we use -8 for the mainbars so that we get that nice divider-line for free
+    .var MAINBARS_OFFSET = TOP_SPECTROMETER_PIXELHEIGHT - 8
+    .var REFLECTION_OFFSET = BOTTOM_SPECTROMETER_PIXELHEIGHT - 7
 
 EndLocalData:
 
@@ -326,7 +326,7 @@ MUSICPLAYER_Initialize:
         lda #$0b                     //; Default color
         ldy BarHeightToColorIndex, x
         bmi UseDefaultColor
-        lda ColorPaletteA, y         //; Get color from palette
+        lda ColorPalettes, y         //; Get color from palette
     UseDefaultColor:
         sta BarColors, x             //; Set main color
         inx
@@ -511,7 +511,7 @@ MUSICPLAYER_IRQ0:
         ldy BarHeightToColorIndex, x
         bmi UseBaseColor
     ReadColorPaletteValue:
-        lda ColorPaletteA, y          //; Get color from current palette
+        lda ColorPalettes, y          //; Get color from current palette
     UseBaseColor:
         sta BarColors, x
 
@@ -519,7 +519,7 @@ MUSICPLAYER_IRQ0:
         lda UpdateNextColorEntry + 1
         clc
         adc #$01
-        cmp #$50
+        cmp #TOP_SPECTROMETER_PIXELHEIGHT + 4 + 1
         bne NotFinishedColorUpdate
         lda #$ff                      //; Mark as done when all colors updated
     NotFinishedColorUpdate:
@@ -692,6 +692,7 @@ MUSICPLAYER_DrawBars:
 
             //; Draw the reflection effect
             txa
+            lsr
             lsr
             tay
             ldx AnimIndex + 1
