@@ -35,7 +35,7 @@
 .var ARTIST_NAME_PADDING = (40 - ARTIST_NAME_LENGTH) / 2 //; Centering padding
 
 //; Visualization layout
-.var TOP_SPECTROMETER_PIXELHEIGHT = 136
+.var TOP_SPECTROMETER_PIXELHEIGHT = 135
 .var TOP_SPECTROMETER_HEIGHT = ceil(TOP_SPECTROMETER_PIXELHEIGHT / 8)
 .var BOTTOM_SPECTROMETER_PIXELHEIGHT = 24
 .var BOTTOM_SPECTROMETER_HEIGHT = ceil(BOTTOM_SPECTROMETER_PIXELHEIGHT / 8)
@@ -44,15 +44,20 @@
 //; =============================================================================
 //; MEMORY CONFIGURATION
 //; =============================================================================
-.var BASE_BANK = 3                           //; Memory bank (3=c000-ffff)
-.var BASE_BANK_ADDRESS = (BASE_BANK * $4000) //; Start address of the bank
-.var SCREEN_BANK = 14                        //; Screen memory location (Bank+[3800,3bff])
-.var CHAR_BANK_FONT = 6                      //; Character set location (Bank+[3000,37ff])
-.var SCREEN_ADDRESS = (BASE_BANK_ADDRESS + (SCREEN_BANK * $400)) //; Screen memory address
-.var SPRITE_POINTERS = (SCREEN_ADDRESS + $3F8) //; Sprite pointer table in screen memory
-.var CHARSET_ADDRESS = (BASE_BANK_ADDRESS + (CHAR_BANK_FONT * $800)) //; Character set address
-.var SPRITE_INDEX_START = $80                //; First sprite index
-.var WATERSPRITES_ADDRESS = (BASE_BANK_ADDRESS + (SPRITE_INDEX_START * $40)) //; Water sprites
+.var BASE_BANK = 3                                                              //; VIC bank (3=c000-ffff)
+.var BASE_BANK_ADDRESS = (BASE_BANK * $4000)                                    //; Start address of the bank
+.var SCREEN_BANK0 = 12                                                          //; Screen memory location (Bank+[3800,3bff])
+.var SCREEN_BANK1 = 13                                                          //; Screen memory location (Bank+[3800,3bff])
+.var CHAR_BANK_FONT = 7                                                         //; Character set location (Bank+[3800,3fff])
+.var SCREEN_ADDRESS0 = (BASE_BANK_ADDRESS + (SCREEN_BANK0 * $400))
+.var SCREEN_ADDRESS1 = (BASE_BANK_ADDRESS + (SCREEN_BANK1 * $400))
+.var SPRITE_POINTERS0 = (SCREEN_ADDRESS0 + $3F8)
+.var SPRITE_POINTERS1 = (SCREEN_ADDRESS1 + $3F8)
+.var D018Value0 = ((SCREEN_BANK0 * 16) + (CHAR_BANK_FONT * 2))
+.var D018Value1 = ((SCREEN_BANK1 * 16) + (CHAR_BANK_FONT * 2))
+.var CHARSET_ADDRESS = (BASE_BANK_ADDRESS + (CHAR_BANK_FONT * $800))
+.var SPRITE_INDEX_START = $80
+.var WATERSPRITES_ADDRESS = (BASE_BANK_ADDRESS + (SPRITE_INDEX_START * $40))
 
 //; =============================================================================
 //; LOCAL DATA SECTION
@@ -90,7 +95,7 @@ StartLocalData:
         .byte $7f                                        //; D015: SpriteEnable (all enabled)
         .byte $08                                        //; D016: Screen control register 2
         .byte $00                                        //; D017: SpriteDoubleHeight
-        .byte ((SCREEN_BANK * 16) + (CHAR_BANK_FONT * 2)) //; D018: Memory setup
+        .byte D018Value0                                 //; D018: Memory setup
         .byte SKIP_VALUE                                 //; D019: Interrupt status
         .byte SKIP_VALUE                                 //; D01A: Interrupt control
         .byte $00                                        //; D01B: SpriteDrawPriority
@@ -124,10 +129,9 @@ StartLocalData:
     FrameCounter:             .byte $00      //; Counter for current frame (0-255)
     Frame_256Counter:         .byte $00      //; Counter for 256-frame cycles
 
-    ReflectionAnimationFrames: .byte 10, 20
-
     //; Cache for previous frame data to optimize rendering
-    PrevFrame_BarHeights:     .fill NUM_FREQS_ON_SCREEN, 255  //; Previous bar heights
+    PrevFrame_BarHeights_Frame0:     .fill NUM_FREQS_ON_SCREEN, 255  //; Previous bar heights
+    PrevFrame_BarHeights_Frame1:     .fill NUM_FREQS_ON_SCREEN, 255  //; Previous bar heights
     PrevFrame_BarColors:      .fill NUM_FREQS_ON_SCREEN, 255  //; Previous bar colors
 
 //;  -------------------------------------------------------------------------
@@ -212,6 +216,8 @@ StartLocalData:
     DarkColorLookup:            .byte $00, $0c, $09, $0e, $06, $09, $0b, $08
                                 .byte $02, $0b, $02, $0b, $0b, $05, $06, $0c
 
+    TuneBackupData:              .fill AddressesThatChange.size(), $00
+
     //; Color palettes for the visualization
     .var NUM_COLOR_PALETTES = 3
     .var NUM_COLORS_PER_PALETTE = 8
@@ -234,32 +240,16 @@ StartLocalData:
 
     //; Calculate which IRQ should update the analyzer
     .var VISUALIZER_UPDATE_IRQ = 0
-    .if (NumCallsPerFrame == 2) {
-        .eval VISUALIZER_UPDATE_IRQ = 1
-    } else {
-        .if (NumCallsPerFrame == 3) {
-            .eval VISUALIZER_UPDATE_IRQ = 2
-        } else {
-            .if (NumCallsPerFrame == 4) {
-                .eval VISUALIZER_UPDATE_IRQ = 2
-            } else {
-                .if (NumCallsPerFrame == 5) {
-                    .eval VISUALIZER_UPDATE_IRQ = 3
-                } else {
-                    .if (NumCallsPerFrame == 6) {
-                        .eval VISUALIZER_UPDATE_IRQ = 3
-                    }
-                }
-            }
-        }
-    }
-
 
     //; Character mapping for meter visualization
+    .align 256
         .fill TOP_SPECTROMETER_PIXELHEIGHT, 224
     MeterToCharValues:
         .fill 8, 225 + i
         .fill TOP_SPECTROMETER_PIXELHEIGHT, 233
+
+    D018Values:                     .byte D018Value0, D018Value1
+    CurrentDB:                      .byte 0
 
     //; Offsets into this table. Normally we should offset both by -7 .. but we use -8 for the mainbars so that we get that nice divider-line for free
     .var MAINBARS_OFFSET = TOP_SPECTROMETER_PIXELHEIGHT - 8
@@ -337,14 +327,18 @@ MUSICPLAYER_Initialize:
         ldx #$00
         lda #$20                     //; Space character
     ClearScreenLoop:
-        sta $d800 + (0 * 256), x     //; Clear color RAM
+        sta $d800 + (0 * 256), x
         sta $d800 + (1 * 256), x
         sta $d800 + (2 * 256), x
         sta $d800 + (3 * 256), x
-        sta SCREEN_ADDRESS + (0 * 256), x  //; Clear screen RAM
-        sta SCREEN_ADDRESS + (1 * 256), x
-        sta SCREEN_ADDRESS + (2 * 256), x
-        sta SCREEN_ADDRESS + (3 * 256), x
+        sta SCREEN_ADDRESS0 + (0 * 256), x
+        sta SCREEN_ADDRESS0 + (1 * 256), x
+        sta SCREEN_ADDRESS0 + (2 * 256), x
+        sta SCREEN_ADDRESS0 + (3 * 256), x
+        sta SCREEN_ADDRESS1 + (0 * 256), x
+        sta SCREEN_ADDRESS1 + (1 * 256), x
+        sta SCREEN_ADDRESS1 + (2 * 256), x
+        sta SCREEN_ADDRESS1 + (3 * 256), x
         inx
         bne ClearScreenLoop
 
@@ -399,14 +393,16 @@ MUSICPLAYER_Initialize:
         lda UpdateVisualizerSignal    //; Check if update is needed
         beq MainLoop                  //; If not, keep waiting
 
-        //; Update the visualization
+        jsr MUSICPLAYER_UpdateBarHeights  //; Apply decay to bar heights
         jsr MUSICPLAYER_SmoothBars    //; Apply smoothing to the bars
         jsr MUSICPLAYER_DrawBars      //; Draw the visualization
 
+        lda CurrentDB
+        eor #$01
+        sta CurrentDB
+
         lda #$00
         sta UpdateVisualizerSignal    //; Clear update flag
-
-        jsr MUSICPLAYER_UpdateBarHeights  //; Apply decay to bar heights
 
         jmp MainLoop                  //; Continue looping
 
@@ -415,16 +411,6 @@ MUSICPLAYER_Initialize:
 //; =============================================================================
 MUSICPLAYER_NextIRQ:
         ldx #$00                      //; IRQ counter (self-modified)
-
-        //; Check if this is the IRQ that should update the visualizer
-        ldy #$00
-        cpx #VISUALIZER_UPDATE_IRQ
-        bne SkipVisualizerUpdate
-        iny                           //; Set update flag if this is the right IRQ
-    SkipVisualizerUpdate:
-        sty UpdateVisualizerSignal
-
-        //; Move to next IRQ in the chain
         inx
         cpx #NumCallsPerFrame
         bne NotLastIRQ
@@ -469,6 +455,15 @@ MUSICPLAYER_IRQ0:
         pha
         tya
         pha
+
+        ldy CurrentDB
+        lda D018Values, y
+        cmp $d018
+        beq !skip+
+        sta $d018
+
+        inc UpdateVisualizerSignal
+    !skip:
 
         jsr MUSICPLAYER_PlayMusic     //; Play music
 
@@ -559,7 +554,8 @@ MUSICPLAYER_IRQ0:
         
         //; Set sprite pointers for all sprites
         .for (var i = 0; i < 7; i++) {
-            sta SPRITE_POINTERS + i
+            sta SPRITE_POINTERS0 + i
+            sta SPRITE_POINTERS1 + i
         }
 
         //; Update sine wave position for next frame
@@ -667,82 +663,121 @@ MUSICPLAYER_SmoothBars:
 //; =============================================================================
 MUSICPLAYER_DrawBars:
 
-        AnimIndex:
-            lda #$00
-            eor #$01
-            sta AnimIndex + 1
+    //; Update $d800 colour screen first!
+        ldy #NUM_FREQS_ON_SCREEN
+    !loop:
+        dey
+        bpl !continue+
+        jmp !FinishedColourUpdates+
 
-        //; Draw each frequency bar with its reflection
-        .for (var i = 0; i < NUM_FREQS_ON_SCREEN; i++) {
-            //; Check if this bar changed since last frame
-            ldx SmoothedBarHeights + i
-            cpx PrevFrame_BarHeights + i
-            bne !updateBar+
-            jmp !skipBarUpdate+
-
-        !updateBar:
-            //; Store new height for next comparison
-            stx PrevFrame_BarHeights + i
-
-            //; Draw the main spectrometer bars
-            .for (var line = 0; line < TOP_SPECTROMETER_HEIGHT; line++) {
-                lda MeterToCharValues - MAINBARS_OFFSET + (line * 8), x
-                sta SCREEN_ADDRESS + ((SPECTROMETER_START_LINE + line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2) + i
-            }
-
-            //; Draw the reflection effect
-            txa
-            lsr
-            lsr
-            tay
-            ldx AnimIndex + 1
-            .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
-                lda MeterToCharValues - REFLECTION_OFFSET + (line * 8), y
-                clc
-                adc ReflectionAnimationFrames, x
-                sta SCREEN_ADDRESS + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2) + i
-            }
-
-        !skipBarUpdate:
-
-            //; Update the bar colors if changed
-            ldx SmoothedBarHeights + i
-            lda BarColors, x
-            cmp PrevFrame_BarColors + i
-            beq !skipColorUpdate+
-            sta PrevFrame_BarColors + i
-
-            //; Set colors for main bars
-            .for (var line = 0; line < TOP_SPECTROMETER_HEIGHT; line++) {
-                sta $d800 + ((SPECTROMETER_START_LINE + line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2) + i
-            }
-
-            //; Set darker colors for reflection
-            tay
-            lda DarkColorLookup, y
-            .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
-                sta $d800 + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2) + i
-            }
-
-        !skipColorUpdate:
+    !continue:
+        ldx SmoothedBarHeights, y
+        lda BarColors, x
+        cmp PrevFrame_BarColors, y
+        beq !loop-
+        sta PrevFrame_BarColors, y
+        .for (var line = 0; line < TOP_SPECTROMETER_HEIGHT; line++) {
+            sta $d800 + ((SPECTROMETER_START_LINE + line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
         }
+        tax
+        lda DarkColorLookup, x
+        .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
+            sta $d800 + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
+        }
+        jmp !loop-
+
+    !FinishedColourUpdates:
+
+        lda CurrentDB
+        bne UpdateFrame0
+        jmp UpdateFrame1
+
+    UpdateFrame0:
+
+    //; Update screen with bars...
+        ldy #NUM_FREQS_ON_SCREEN
+
+    !loop:
+        dey
+        bpl !continue+
 
         rts
 
-BackupData:                         .fill AddressesThatChange.size(), $00
+    !continue:
+        lda SmoothedBarHeights, y
+        cmp PrevFrame_BarHeights_Frame0, y
+        beq !loop-
+
+    !updateBar:
+        //; Store new height for next comparison
+        sta PrevFrame_BarHeights_Frame0, y
+        tax
+
+        .for (var line = 0; line < TOP_SPECTROMETER_HEIGHT; line++) {
+            lda MeterToCharValues - MAINBARS_OFFSET + (line * 8), x
+            sta SCREEN_ADDRESS0 + ((SPECTROMETER_START_LINE + line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
+        }
+        txa
+        lsr
+        lsr
+        tax
+        .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
+            lda MeterToCharValues - REFLECTION_OFFSET + (line * 8), x
+            clc
+            adc #20
+            sta SCREEN_ADDRESS0 + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
+        }
+        jmp !loop-
+
+    UpdateFrame1:
+
+    //; Update screen with bars...
+        ldy #NUM_FREQS_ON_SCREEN
+
+    !loop:
+        dey
+        bpl !continue+
+
+        rts
+
+    !continue:
+        lda SmoothedBarHeights, y
+        cmp PrevFrame_BarHeights_Frame1, y
+        beq !loop-
+
+    !updateBar:
+        //; Store new height for next comparison
+        sta PrevFrame_BarHeights_Frame1, y
+        tax
+
+        .for (var line = 0; line < TOP_SPECTROMETER_HEIGHT; line++) {
+            lda MeterToCharValues - MAINBARS_OFFSET + (line * 8), x
+            sta SCREEN_ADDRESS1 + ((SPECTROMETER_START_LINE + line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
+        }
+        txa
+        lsr
+        lsr
+        tax
+        .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
+            lda MeterToCharValues - REFLECTION_OFFSET + (line * 8), x
+            clc
+            adc #20
+            sta SCREEN_ADDRESS1 + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2), y
+        }
+        jmp !loop-
 
 BackupAddresses:
         .for (var i = 0; i < AddressesThatChange.size(); i++)
         {
             lda AddressesThatChange.get(i)
-            sta BackupData + i
+            sta TuneBackupData + i
         }
         rts
         
 RestoreAddresses:
         .for (var i = 0; i < AddressesThatChange.size(); i++)
         {
-            lda BackupData + i
+            lda TuneBackupData + i
             sta AddressesThatChange.get(i)
         }
         rts
@@ -882,9 +917,11 @@ MUSICPLAYER_SetupSong:
         ldy #SONG_TITLE_LENGTH - 1
     DisplaySongTitle:
         lda SongData_Title, y
-        sta SCREEN_ADDRESS + ((SONG_TITLE_SCREEN_LINE + 0) * 40) + SONG_TITLE_PADDING, y
+        sta SCREEN_ADDRESS0 + ((SONG_TITLE_SCREEN_LINE + 0) * 40) + SONG_TITLE_PADDING, y
+        sta SCREEN_ADDRESS1 + ((SONG_TITLE_SCREEN_LINE + 0) * 40) + SONG_TITLE_PADDING, y
         ora #$80                      //; Reverse character for bottom row
-        sta SCREEN_ADDRESS + ((SONG_TITLE_SCREEN_LINE + 1) * 40) + SONG_TITLE_PADDING, y
+        sta SCREEN_ADDRESS0 + ((SONG_TITLE_SCREEN_LINE + 1) * 40) + SONG_TITLE_PADDING, y
+        sta SCREEN_ADDRESS1 + ((SONG_TITLE_SCREEN_LINE + 1) * 40) + SONG_TITLE_PADDING, y
         dey
         bpl DisplaySongTitle
 
@@ -892,9 +929,11 @@ MUSICPLAYER_SetupSong:
         ldy #ARTIST_NAME_LENGTH - 1
     DisplayArtistName:
         lda SongData_Artist, y
-        sta SCREEN_ADDRESS + ((ARTIST_NAME_SCREEN_LINE + 0) * 40) + ARTIST_NAME_PADDING, y
+        sta SCREEN_ADDRESS0 + ((ARTIST_NAME_SCREEN_LINE + 0) * 40) + ARTIST_NAME_PADDING, y
+        sta SCREEN_ADDRESS1 + ((ARTIST_NAME_SCREEN_LINE + 0) * 40) + ARTIST_NAME_PADDING, y
         ora #$80                      //; Reverse character for bottom row
-        sta SCREEN_ADDRESS + ((ARTIST_NAME_SCREEN_LINE + 1) * 40) + ARTIST_NAME_PADDING, y
+        sta SCREEN_ADDRESS0 + ((ARTIST_NAME_SCREEN_LINE + 1) * 40) + ARTIST_NAME_PADDING, y
+        sta SCREEN_ADDRESS1 + ((ARTIST_NAME_SCREEN_LINE + 1) * 40) + ARTIST_NAME_PADDING, y
         dey
         bpl DisplayArtistName
 
