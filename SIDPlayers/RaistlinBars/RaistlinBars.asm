@@ -35,9 +35,10 @@
 .var ARTIST_NAME_PADDING = (40 - ARTIST_NAME_LENGTH) / 2 //; Centering padding
 
 //; Visualization layout
-.var TOP_SPECTROMETER_HEIGHT = 15            //; Height of main spectrometer in chars
-.var TOP_SPECTROMETER_PIXELHEIGHT = (TOP_SPECTROMETER_HEIGHT * 8)
-.var BOTTOM_SPECTROMETER_HEIGHT = 3          //; Height of reflection effect in chars
+.var TOP_SPECTROMETER_PIXELHEIGHT = 128
+.var TOP_SPECTROMETER_HEIGHT = ceil(TOP_SPECTROMETER_PIXELHEIGHT / 8)
+.var BOTTOM_SPECTROMETER_PIXELHEIGHT = 32
+.var BOTTOM_SPECTROMETER_HEIGHT = ceil(BOTTOM_SPECTROMETER_PIXELHEIGHT / 8)
 .var SPECTROMETER_START_LINE = 25 - (TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT)
 
 //; =============================================================================
@@ -123,6 +124,8 @@ StartLocalData:
     FrameCounter:             .byte $00      //; Counter for current frame (0-255)
     Frame_256Counter:         .byte $00      //; Counter for 256-frame cycles
 
+    ReflectionAnimationFrames: .byte 10, 20
+
     //; Cache for previous frame data to optimize rendering
     PrevFrame_BarHeights:     .fill NUM_FREQS_ON_SCREEN, 255  //; Previous bar heights
     PrevFrame_BarColors:      .fill NUM_FREQS_ON_SCREEN, 255  //; Previous bar colors
@@ -206,24 +209,24 @@ StartLocalData:
     SIDRegisterCopy:            .fill 32, 0    //; Copy of SID registers 
 
     //; Color lookup tables
-    DarkColorLookup:            .byte $00, $0c, $00, $0e, $06, $09, $00, $08
-                                .byte $02, $0b, $02, $00, $0b, $05, $06, $0c
+    DarkColorLookup:            .byte $00, $0c, $09, $0e, $06, $09, $0b, $08
+                                .byte $02, $0b, $02, $0b, $0b, $05, $06, $0c
 
     //; Color palettes for the visualization
     .var NUM_COLOR_PALETTES = 4
-    ColorPaletteA:              .byte $09, $04, $0d, $01
-    ColorPaletteB:              .byte $06, $0e, $07, $01
-    ColorPaletteC:              .byte $02, $0a, $0d, $01
-    ColorPaletteD:              .byte $0b, $0c, $0f, $01
+    ColorPaletteA:              .byte $09, $04, $05, $0d, $01
+    ColorPaletteB:              .byte $09, $06, $0e, $03, $01
+    ColorPaletteC:              .byte $09, $02, $0a, $0d, $01
+    ColorPaletteD:              .byte $09, $0c, $0f, $07, $01
 
     //; Pointers to color palettes
     ColorPalettePtr_Lo:         .byte <ColorPaletteA, <ColorPaletteB, <ColorPaletteC, <ColorPaletteD
     ColorPalettePtr_Hi:         .byte >ColorPaletteA, >ColorPaletteB, >ColorPaletteC, >ColorPaletteD
 
     //; Color mapping table based on bar height
-    BarHeightToColorIndex:    .byte $ff                                      //;  baseline
-                              .fill TOP_SPECTROMETER_PIXELHEIGHT, min((i * 5) / TOP_SPECTROMETER_PIXELHEIGHT, 3)
-                              .byte $03
+    BarHeightToColorIndex:      .byte $ff
+                                .fill TOP_SPECTROMETER_PIXELHEIGHT, min(floor((i * 5) / TOP_SPECTROMETER_PIXELHEIGHT), 4)
+                                .byte 3
 
     //; Color tables for the visualization
     BarColors:                  .fill TOP_SPECTROMETER_PIXELHEIGHT, $0b  //; Main colors for bars
@@ -253,6 +256,9 @@ StartLocalData:
 
     //; Character mapping for meter visualization
     .var METER_TO_CHAR_PADDING = TOP_SPECTROMETER_PIXELHEIGHT
+
+    .var MAINBARS_OFFSET = TOP_SPECTROMETER_PIXELHEIGHT - 7
+    .var REFLECTION_OFFSET = BOTTOM_SPECTROMETER_PIXELHEIGHT - 7
 
         .fill METER_TO_CHAR_PADDING, 224
     MeterToCharValues:
@@ -324,7 +330,7 @@ MUSICPLAYER_Initialize:
     UseDefaultColor:
         sta BarColors, x             //; Set main color
         inx
-        cpx #TOP_SPECTROMETER_PIXELHEIGHT
+        cpx #TOP_SPECTROMETER_PIXELHEIGHT + 2
         bne InitBarColorsLoop
 
         //; Clear screen and color memory
@@ -660,6 +666,12 @@ MUSICPLAYER_SmoothBars:
 //; MUSICPLAYER_DrawBars() - Draw the spectrometer bars on screen
 //; =============================================================================
 MUSICPLAYER_DrawBars:
+
+        AnimIndex:
+            lda #$00
+            eor #$01
+            sta AnimIndex + 1
+
         //; Draw each frequency bar with its reflection
         .for (var i = 0; i < NUM_FREQS_ON_SCREEN; i++) {
             //; Check if this bar changed since last frame
@@ -674,7 +686,7 @@ MUSICPLAYER_DrawBars:
 
             //; Draw the main spectrometer bars
             .for (var line = 0; line < TOP_SPECTROMETER_HEIGHT; line++) {
-                lda MeterToCharValues - METER_TO_CHAR_PADDING + ((line + 1) * 8), x
+                lda MeterToCharValues - MAINBARS_OFFSET + (line * 8), x
                 sta SCREEN_ADDRESS + ((SPECTROMETER_START_LINE + line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2) + i
             }
 
@@ -682,16 +694,18 @@ MUSICPLAYER_DrawBars:
             txa
             lsr
             tay
+            ldx AnimIndex + 1
             .for (var line = 0; line < BOTTOM_SPECTROMETER_HEIGHT; line++) {
-                lda MeterToCharValues - 17 + (line * 8), y
+                lda MeterToCharValues - REFLECTION_OFFSET + (line * 8), y
                 clc
-                adc #10
+                adc ReflectionAnimationFrames, x
                 sta SCREEN_ADDRESS + ((SPECTROMETER_START_LINE + TOP_SPECTROMETER_HEIGHT + BOTTOM_SPECTROMETER_HEIGHT - 1 - line) * 40) + ((40 - NUM_FREQS_ON_SCREEN) / 2) + i
             }
 
         !skipBarUpdate:
 
             //; Update the bar colors if changed
+            ldx SmoothedBarHeights + i
             lda BarColors, x
             cmp PrevFrame_BarColors + i
             beq !skipColorUpdate+
